@@ -1,0 +1,14 @@
+name: MinDispatch
+on:
+  workflow_dispatch:
+    inputs:
+      os_patch_level:
+        description: "Patch filter"
+        required: true
+        type: string
+        default: "All"
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "ok ${{ github.event.inputs.os_patch_level }}"
