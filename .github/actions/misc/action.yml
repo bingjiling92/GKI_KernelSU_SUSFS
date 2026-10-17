@@ -17,25 +17,32 @@ inputs:
     description: 'Build variant (Normal, Bypass, Wild, boot-time)'
     required: true
 
+# ---------------------------------------------------------------------------
+# icecream config
+#
+# Every entry below was checked against stock_6.1.138.config and the live
+# /proc/cmdline. Only real deltas are kept; entries whose stock value is
+# already correct are omitted because they would be no-ops.
+#
+# Runtime evidence gathered from the device:
+#   - kasan=off          -> KASAN is disabled at runtime; turning the compile
+#                           option off yields no speedup, so it is left alone.
+#   - slub_debug=-       -> SLUB_DEBUG is disabled at runtime; left alone.
+#   - KFENCE             -> /sys/kernel/debug/kfence absent, sampling off.
+#   - no init_on_alloc=0 -> INIT_ON_ALLOC_DEFAULT_ON is actually active, so
+#                           this is a genuine hot-path cost.
+#
+# NOTE: config_list is interpolated into a bash script. Every comment inside
+# it MUST be plain ASCII without quotes, otherwise the shell parses Chinese
+# punctuation as commands (this exact bug broke run #13 with
+# "line 29: VFS: command not found").
+# ---------------------------------------------------------------------------
 runs:
   using: "composite"
   steps:
     - name: Enable Kernel Configs
       uses: ./.github/actions/set-kernel-config
       with:
-        # ---------------------------------------------------------------------
-        # icecream config
-        #
-        # 每一条都对照 stock_6.1.138.config 实测过现值，只保留**有增量**的项。
-        # stock 本来就是 y 的（LRU_GEN / THP_MADVISE / KYBER / TEO / DEBUG_STACK_USAGE）
-        # 不再重复写入 —— 写了也是空操作。
-        #
-        # 实测依据（现场 /proc/cmdline + stock config）：
-        #   kasan=off           → KASAN 运行时不生效，关编译选项无性能收益，保持
-        #   slub_debug=-        → SLUB_DEBUG 运行时不生效，保持
-        #   KFENCE              → /sys/kernel/debug/kfence 不存在，采样未启用，保持
-        #   无 init_on_alloc=0  → INIT_ON_ALLOC_DEFAULT_ON 确实生效中，这是真实开销
-        # ---------------------------------------------------------------------
         config_list: |
           CONFIG_OVERLAY_FS=y
           CONFIG_TMPFS_XATTR=y
@@ -43,11 +50,10 @@ runs:
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
 
-          # ===== 1. zram 内置 + 默认 lz4 =====
-          # 实测依赖链（现场 modules.dep）：
-          #   zram.ko -> zsmalloc.ko，且**没有任何模块依赖 zram**
-          #   ⇒ 内置化不会打断 vendor 模块的符号查找
-          # 现场原始：ZRAM=m / ZSMALLOC=m / DEF_COMP_LZORLE=y
+          # 1. zram builtin with lz4 default.
+          # Dependency chain from live modules.dep: zram.ko -> zsmalloc.ko,
+          # and no module depends on zram, so building it in cannot break
+          # vendor module symbol lookups.
           CONFIG_ZRAM=y
           CONFIG_ZSMALLOC=y
           CONFIG_ZRAM_DEF_COMP_LZ4=y
@@ -60,19 +66,19 @@ runs:
           CONFIG_CRYPTO_LZ4=y
           CONFIG_CRYPTO_LZ4HC=y
 
-          # ===== 2. 放开限制（低风险）=====
-          # hybridmount-android14-6.1.ko 的 vermagic = 6.1.166-dirty，
-          # 与本内核 6.1.138 不匹配会被拒绝加载 → Hybrid Mount 报"外来 VFS 实现"。
+          # 2. Relax module version check.
+          # hybridmount-android14-6.1.ko is built with vermagic 6.1.166-dirty
+          # and is rejected on a 6.1.138 kernel, which makes Hybrid Mount
+          # report a foreign VFS implementation.
           CONFIG_MODULE_FORCE_LOAD=y
           CONFIG_MODULE_FORCE_UNLOAD=y
 
-          # ===== 3. 省电（stock 未开，真实增量）=====
-          # workqueue 空闲时用无界省电 worker，不在 CPU 上空转
+          # 3. Power saving (stock does not enable this).
           CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
 
-          # ===== 4. 性能（stock 开着，有实测热路径代价）=====
-          # INIT_ON_ALLOC：每次 kmalloc 分配后 memset 清零，业界实测 1~5% 损失，
-          #               现场 cmdline 无 init_on_alloc=0 覆盖 ⇒ 确实生效中
+          # 4. Performance (stock enables these, real hot-path cost).
+          # INIT_ON_ALLOC zeroes every kmalloc allocation; 1-5 percent loss.
+          # DEBUG_LIST validates list pointers on every add/del, expanded at
+          # compile time so it cannot be turned off from the command line.
           CONFIG_INIT_ON_ALLOC_DEFAULT_ON=n
-          # DEBUG_LIST：每次 list_add/del 都做双向指针一致性校验，编译期展开无法 cmdline 关闭
           CONFIG_DEBUG_LIST=n
