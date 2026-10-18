@@ -18,17 +18,24 @@ inputs:
     required: true
 
 # ---------------------------------------------------------------------------
-# icecream bisect step A -- brand name only, zero config deviation
+# icecream bisect step B -- add back the zram built-in group only
 #
-# Two icecream builds have failed to boot (first screen, then reaching the
-# native UI before resetting). The only setting both shared that the working
-# baseline does not have is CONFIG_ZRAM=y, but neither failure produced any
-# captureable log, so the cause is not yet proven.
+# Step A (brand name only, zero config deviation) booted successfully.
+# Conclusion: the build pipeline and branch state are fine, and the brand
+# string is irrelevant. The failure must be one of the config entries.
 #
-# This step removes every config deviation and changes only the brand string,
-# so it answers one question: does the build pipeline itself still produce a
-# bootable kernel? If this boots, the pipeline is fine and the delta is one of
-# the settings. If this fails, the pipeline or branch state is at fault.
+# Step B adds back ONLY the zram built-in group, which is the prerequisite for
+# lz4kd to appear in comp_algorithm (the zcomp backend table lives inside
+# zram.ko, and zram.ko is loaded at 0.233660s by first-stage init from
+# /lib/modules/, far earlier than post-fs-data, so a module overlay cannot
+# change it).
+#
+# Deliberately NOT included in step B (added later, one group at a time):
+#   CONFIG_WQ_POWER_EFFICIENT_DEFAULT / CONFIG_INIT_ON_ALLOC_DEFAULT_ON
+#
+# The crypto backends CONFIG_CRYPTO_LZ4K/LZ4KD are already appended to
+# gki_defconfig unconditionally by .github/actions/lz4kd-houji, so they are
+# present in every build including the working ones; they are not re-declared.
 #
 # config_list is interpolated into a bash script: comments stay plain ASCII.
 # ---------------------------------------------------------------------------
@@ -44,3 +51,20 @@ runs:
           CONFIG_TMPFS_POSIX_ACL=y
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
+
+          # zram built into vmlinux so the zcomp backend table (which carries
+          # lz4kd) is present in the running kernel.
+          CONFIG_ZRAM=y
+          CONFIG_ZSMALLOC=y
+          CONFIG_ZRAM_DEF_COMP_LZ4KD=y
+          CONFIG_ZRAM_DEF_COMP_LZO=n
+          CONFIG_ZRAM_DEF_COMP_LZORLE=n
+          CONFIG_ZRAM_DEF_COMP_LZ4=n
+          CONFIG_ZRAM_DEF_COMP_ZSTD=n
+          CONFIG_ZRAM_MULTI_COMP=y
+          CONFIG_ZRAM_WRITEBACK=y
+
+          # Tolerate the stale /system_dlkm zram.ko, which first-stage init
+          # still tries to load into a kernel that already has zram built in.
+          CONFIG_MODULE_FORCE_LOAD=y
+          CONFIG_MODULE_FORCE_UNLOAD=y
