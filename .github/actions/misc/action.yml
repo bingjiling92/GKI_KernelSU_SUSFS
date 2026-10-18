@@ -18,38 +18,19 @@ inputs:
     required: true
 
 # ---------------------------------------------------------------------------
-# icecream v2 -- adapt to the running system kernel, not to older attempts
+# icecream bisect step A -- brand name only, zero config deviation
 #
-# Ground truth used here is the device's own kernel, not any earlier branch:
-#   live kernel : 6.1.138-android14-11-g0c3d559bcd85-ab14529422
-#   config      : /proc/config.gz == /sdcard/Documents/kernel_backups/stock_config.gz
-#   /proc/modules: zram / zsmalloc both loaded as modules
+# Two icecream builds have failed to boot (first screen, then reaching the
+# native UI before resetting). The only setting both shared that the working
+# baseline does not have is CONFIG_ZRAM=y, but neither failure produced any
+# captureable log, so the cause is not yet proven.
 #
-# Measured facts from that system:
+# This step removes every config deviation and changes only the brand string,
+# so it answers one question: does the build pipeline itself still produce a
+# bootable kernel? If this boots, the pipeline is fine and the delta is one of
+# the settings. If this fails, the pipeline or branch state is at fault.
 #
-# 1) __list_add_valid is referenced by 112 modules under /vendor_dlkm/lib/modules,
-#    __list_del_entry_valid by 103. Both are produced by CONFIG_DEBUG_LIST.
-#    Disabling DEBUG_LIST removes those exports and every one of those modules
-#    fails to load, which is what made the first icecream build stop at the
-#    boot logo. DEBUG_LIST therefore stays at its stock value (y).
-#
-# 2) Nothing references zram/zsmalloc symbols:
-#      zram_add / zs_create_pool / zcomp_create / zs_malloc  -> 0 modules
-#    The only edge in modules.dep is zram.ko -> zsmalloc.ko. Building zram in
-#    does not break any vendor module by symbol dependency.
-#
-# 3) zram.ko is loaded at [0.233660] from /lib/modules/ by first stage init,
-#    well before post-fs-data, so an overlay or bind mount cannot influence it.
-#    lz4kd lives inside zram.ko's zcomp backend table, so the only way to make
-#    it selectable is to build zram into the kernel.
-#
-# 4) TRIM_UNUSED_KSYMS=y is set. Building zram in removes its only in-tree
-#    consumer, so zram_*/zs_* may be trimmed from the export list. That is
-#    harmless here because no other module references them (fact 2), and
-#    CONFIG_MODULE_FORCE_LOAD covers the now-stale /system_dlkm/zram.ko.
-#
-# config_list is interpolated into a bash script: every comment inside it stays
-# plain ASCII without quote characters.
+# config_list is interpolated into a bash script: comments stay plain ASCII.
 # ---------------------------------------------------------------------------
 runs:
   using: "composite"
@@ -63,36 +44,3 @@ runs:
           CONFIG_TMPFS_POSIX_ACL=y
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
-
-          # 1. zram built into vmlinux, with lz4kd as the default algorithm.
-          #    Verified: no module depends on zram symbols, so nothing breaks.
-          CONFIG_ZRAM=y
-          CONFIG_ZSMALLOC=y
-          CONFIG_ZRAM_DEF_COMP_LZ4KD=y
-          CONFIG_ZRAM_DEF_COMP_LZ4=n
-          CONFIG_ZRAM_DEF_COMP_LZO=n
-          CONFIG_ZRAM_DEF_COMP_LZORLE=n
-          CONFIG_ZRAM_DEF_COMP_ZSTD=n
-          CONFIG_ZRAM_MULTI_COMP=y
-          CONFIG_ZRAM_WRITEBACK=y
-          CONFIG_LZ4K_COMPRESS=y
-          CONFIG_LZ4K_DECOMPRESS=y
-          CONFIG_LZ4KD_COMPRESS=y
-          CONFIG_LZ4KD_DECOMPRESS=y
-          CONFIG_CRYPTO_LZ4K=y
-          CONFIG_CRYPTO_LZ4KD=y
-          CONFIG_CRYPTO_LZ4=y
-          CONFIG_CRYPTO_LZ4HC=y
-
-          # 2. Keep the stale /system_dlkm/zram.ko from failing hard.
-          CONFIG_MODULE_FORCE_LOAD=y
-          CONFIG_MODULE_FORCE_UNLOAD=y
-
-          # 3. Power saving: idle workqueues stop keeping a bound worker awake.
-          CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
-
-          # 4. Performance: stop zeroing every kmalloc allocation by default.
-          CONFIG_INIT_ON_ALLOC_DEFAULT_ON=n
-
-          # 5. CONFIG_DEBUG_LIST is intentionally left at stock value (y).
-          #    See note 1 above: 112 vendor modules depend on its exports.
