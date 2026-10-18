@@ -18,33 +18,25 @@ inputs:
     required: true
 
 # ---------------------------------------------------------------------------
-# icecream phase 1 -- zram KMI rollback
+# icecream FINAL2 -- restore stock memory semantics
 #
-# Run #15 built with CONFIG_ZRAM=y and the device bootlooped on the first
-# screen: the kernel loads, the vendor modules never come up, the watchdog
-# resets. The repo already carried the reason, in
-# .github/actions/lz4kd-houji/action.yml lines 43-46:
+# Deltas vs stock, all runtime-behavior only, no exported-symbol changes:
+#   MODULE_FORCE_LOAD / MODULE_FORCE_UNLOAD : relax module vermagic check
+#   WQ_POWER_EFFICIENT_DEFAULT              : idle workqueue power saving
 #
-#   # v5: ZRAM stays =m (stock GKI). Building it in (=y) changes symbol
-#   # CRCs and breaks all 497 vendor modules -> early-boot bootloop
-#   # (proven by v3/v4).
+# Removed vs phase-1 (root cause of the desktop crashes):
+#   CONFIG_INIT_ON_ALLOC_DEFAULT_ON=n
+#   Stock clears every allocation. MIUI's MiBackgroundBlurBlend wraps an
+#   AHardwareBuffer into a GrBackendTexture, and gralloc/QTI mapper paths
+#   rely on zeroed metadata pages. Without init_on_alloc the buffer carries
+#   previous-user garbage; Skia validates the texture as invalid and hwui
+#   aborts (AutoBackendTextureRelease.cpp, com.miui.home, 5 crashes on
+#   2026-10-19). Confirmed against tombstone_00 @ 02:07.
 #
-# v5 (commit b468988) reverted to ZRAM=m for exactly this reason. I overrode
-# that warning with my own reasoning about the zram -> zsmalloc dependency
-# chain, and that reasoning was wrong.
+# ZRAM/ZSMALLOC stay =m exactly as stock: first-stage init loads
+# /lib/modules/zram.ko at 0.233660s and the module contract must hold.
 #
-# Phase 1 therefore keeps zram/zsmalloc as modules, identical to v5, and adds
-# only entries that cannot change exported symbols:
-#   - MODULE_FORCE_LOAD / MODULE_FORCE_UNLOAD : relax a version check
-#   - WQ_POWER_EFFICIENT_DEFAULT              : runtime scheduler default
-#   - INIT_ON_ALLOC_DEFAULT_ON=n              : runtime default, no symbol
-#
-# Deliberately NOT changed yet (phase 2, one variable at a time):
-#   CONFIG_DEBUG_LIST -- disabling it removes the __list_add_valid and
-#   __list_del_entry_valid exports, which vendor modules may reference.
-#
-# config_list is interpolated into a bash script, so every comment inside it
-# stays plain ASCII and unquoted.
+# config_list is interpolated into a bash script: comments stay ASCII.
 # ---------------------------------------------------------------------------
 runs:
   using: "composite"
@@ -59,13 +51,10 @@ runs:
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
 
-          # Allow modules whose vermagic does not match, for example
-          # hybridmount built for 6.1.166 running on a 6.1.138 kernel.
+          # Relax module vermagic enforcement, e.g. hybridmount built for
+          # 6.1.166 loading on this 6.1.138 kernel.
           CONFIG_MODULE_FORCE_LOAD=y
           CONFIG_MODULE_FORCE_UNLOAD=y
 
-          # Power saving: idle workqueues stop spinning a bound worker.
+          # Power saving: idle workqueues release the bound worker.
           CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
-
-          # Performance: stop zeroing every kmalloc allocation by default.
-          CONFIG_INIT_ON_ALLOC_DEFAULT_ON=n
