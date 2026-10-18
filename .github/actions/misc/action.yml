@@ -18,24 +18,33 @@ inputs:
     required: true
 
 # ---------------------------------------------------------------------------
-# icecream config
+# icecream phase 1 -- zram KMI rollback
 #
-# Every entry below was checked against stock_6.1.138.config and the live
-# /proc/cmdline. Only real deltas are kept; entries whose stock value is
-# already correct are omitted because they would be no-ops.
+# Run #15 built with CONFIG_ZRAM=y and the device bootlooped on the first
+# screen: the kernel loads, the vendor modules never come up, the watchdog
+# resets. The repo already carried the reason, in
+# .github/actions/lz4kd-houji/action.yml lines 43-46:
 #
-# Runtime evidence gathered from the device:
-#   - kasan=off          -> KASAN is disabled at runtime; turning the compile
-#                           option off yields no speedup, so it is left alone.
-#   - slub_debug=-       -> SLUB_DEBUG is disabled at runtime; left alone.
-#   - KFENCE             -> /sys/kernel/debug/kfence absent, sampling off.
-#   - no init_on_alloc=0 -> INIT_ON_ALLOC_DEFAULT_ON is actually active, so
-#                           this is a genuine hot-path cost.
+#   # v5: ZRAM stays =m (stock GKI). Building it in (=y) changes symbol
+#   # CRCs and breaks all 497 vendor modules -> early-boot bootloop
+#   # (proven by v3/v4).
 #
-# NOTE: config_list is interpolated into a bash script. Every comment inside
-# it MUST be plain ASCII without quotes, otherwise the shell parses Chinese
-# punctuation as commands (this exact bug broke run #13 with
-# "line 29: VFS: command not found").
+# v5 (commit b468988) reverted to ZRAM=m for exactly this reason. I overrode
+# that warning with my own reasoning about the zram -> zsmalloc dependency
+# chain, and that reasoning was wrong.
+#
+# Phase 1 therefore keeps zram/zsmalloc as modules, identical to v5, and adds
+# only entries that cannot change exported symbols:
+#   - MODULE_FORCE_LOAD / MODULE_FORCE_UNLOAD : relax a version check
+#   - WQ_POWER_EFFICIENT_DEFAULT              : runtime scheduler default
+#   - INIT_ON_ALLOC_DEFAULT_ON=n              : runtime default, no symbol
+#
+# Deliberately NOT changed yet (phase 2, one variable at a time):
+#   CONFIG_DEBUG_LIST -- disabling it removes the __list_add_valid and
+#   __list_del_entry_valid exports, which vendor modules may reference.
+#
+# config_list is interpolated into a bash script, so every comment inside it
+# stays plain ASCII and unquoted.
 # ---------------------------------------------------------------------------
 runs:
   using: "composite"
@@ -50,35 +59,13 @@ runs:
           CONFIG_KALLSYMS=y
           CONFIG_KALLSYMS_ALL=y
 
-          # 1. zram builtin with lz4 default.
-          # Dependency chain from live modules.dep: zram.ko -> zsmalloc.ko,
-          # and no module depends on zram, so building it in cannot break
-          # vendor module symbol lookups.
-          CONFIG_ZRAM=y
-          CONFIG_ZSMALLOC=y
-          CONFIG_ZRAM_DEF_COMP_LZ4=y
-          CONFIG_ZRAM_DEF_COMP_LZ4KD=n
-          CONFIG_ZRAM_DEF_COMP_LZO=n
-          CONFIG_ZRAM_DEF_COMP_LZORLE=n
-          CONFIG_ZRAM_DEF_COMP_ZSTD=n
-          CONFIG_ZRAM_MULTI_COMP=y
-          CONFIG_ZRAM_WRITEBACK=y
-          CONFIG_CRYPTO_LZ4=y
-          CONFIG_CRYPTO_LZ4HC=y
-
-          # 2. Relax module version check.
-          # hybridmount-android14-6.1.ko is built with vermagic 6.1.166-dirty
-          # and is rejected on a 6.1.138 kernel, which makes Hybrid Mount
-          # report a foreign VFS implementation.
+          # Allow modules whose vermagic does not match, for example
+          # hybridmount built for 6.1.166 running on a 6.1.138 kernel.
           CONFIG_MODULE_FORCE_LOAD=y
           CONFIG_MODULE_FORCE_UNLOAD=y
 
-          # 3. Power saving (stock does not enable this).
+          # Power saving: idle workqueues stop spinning a bound worker.
           CONFIG_WQ_POWER_EFFICIENT_DEFAULT=y
 
-          # 4. Performance (stock enables these, real hot-path cost).
-          # INIT_ON_ALLOC zeroes every kmalloc allocation; 1-5 percent loss.
-          # DEBUG_LIST validates list pointers on every add/del, expanded at
-          # compile time so it cannot be turned off from the command line.
+          # Performance: stop zeroing every kmalloc allocation by default.
           CONFIG_INIT_ON_ALLOC_DEFAULT_ON=n
-          CONFIG_DEBUG_LIST=n
