@@ -416,35 +416,6 @@ jobs:
     - name: Setup Misc Configs
       uses: ./.github/actions/misc
 
-    # icecream: CONFIG_ZRAM=y / CONFIG_ZSMALLOC=y move these two drivers into
-    # vmlinux, but kleaf still lists drivers/block/zram/zram.ko and
-    # mm/zsmalloc.ko among the expected //common:gki_system_dlkm_modules
-    # outputs. KernelBuild then aborts with
-    #   "Unable to find drivers/block/zram/zram.ko in any of the following..."
-    # Drop those two entries so the module list matches what the build emits.
-    - name: Drop built-in zram/zsmalloc from kleaf module lists
-      if: inputs.version == 'android14-6.1'
-      shell: bash
-      working-directory: ${{ github.workspace }}/kernel/common
-      run: |
-        set -euo pipefail
-        echo "[+] scanning module lists for zram/zsmalloc entries"
-        found=0
-        for f in modules.bzl BUILD.bazel; do
-          [ -f "$f" ] || continue
-          if grep -qE 'zram\.ko|zsmalloc\.ko' "$f"; then
-            echo "[+] cleaning $f"
-            sed -i 's|"drivers/block/zram/zram\.ko",\?||g; s|"mm/zsmalloc\.ko",\?||g' "$f"
-            sed -i '\#drivers/block/zram/zram\.ko#d; \#mm/zsmalloc\.ko#d' "$f"
-            found=1
-            echo "[+] remaining hits in $f: $(grep -cE 'zram\.ko|zsmalloc\.ko' "$f" || true)"
-          fi
-        done
-        if [ "$found" -eq 0 ]; then
-          echo "[!] no zram/zsmalloc entries found; nothing to do"
-        fi
-        echo "[+] module list cleanup done"
-
     - name: Enable BPF Stack (BTF + eBPF + FUSE-BPF)
       if: contains(inputs.feature_set, 'BPF')
       uses: ./.github/actions/btf
