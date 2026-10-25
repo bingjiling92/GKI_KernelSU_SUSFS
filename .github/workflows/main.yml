@@ -789,6 +789,9 @@ jobs:
 
   build-nomount-module:
     needs: resolve-sources
+    # feat/hybridmount-vfs-6.1.138: VFS is built into the kernel; no NoMount
+    # metamodule artifact is produced on this branch. Job disabled.
+    if: "false" # hybridmount branch: disabled
     # Scheduled (nightly) runs carry NO inputs at all - inputs.use_nomount is
     # empty, not true - so the inner steps' `if: inputs.use_nomount` gates
     # would skip everything and produce no metamodule artifact. Compute the
@@ -1908,7 +1911,7 @@ jobs:
         done
 
     - name: Verify NoMount metamodule zip
-      if: inputs.use_nomount
+      if: false # hybridmount branch: no metamodule artifact
       run: |
         set -euo pipefail
         # The metamodule silently missed r20 (artifact built fine, no zip

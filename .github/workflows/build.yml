@@ -430,12 +430,22 @@ jobs:
         version: ${{ inputs.version }}
         kernel_version: ${{ inputs.kernel_version }}
 
-    - name: Integrate NoMount
+    - name: Integrate HybridMount VFS (replaces NoMount, houji)
       if: contains(inputs.feature_set, 'NoMount') || inputs.feature_set == 'All'
-      uses: ./.github/actions/nomount
+      uses: ./.github/actions/hybridmount
+
+    - name: Houji config deltas (disable IoT stacks, keep NFC)
+      if: contains(inputs.feature_set, 'NoMount') || inputs.feature_set == 'All'
+      uses: ./.github/actions/set-kernel-config
       with:
-        commit: ${{ inputs.nomount_commit }}
-        kernel_version: ${{ inputs.kernel_version }}
+        config_list: |
+          CONFIG_CAN=n
+          CONFIG_CAN_NETLINK=n
+          CONFIG_6LOWPAN=n
+          CONFIG_IEEE802154=n
+          CONFIG_TIPC=n
+          CONFIG_ZRAM=m
+          CONFIG_ZRAM_WRITEBACK=n
 
     - name: Apply ABI Compare Bypass
       if: false
